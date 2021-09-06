@@ -369,13 +369,27 @@ def unmarshal_response_inner(
     deref = op.swagger_spec.deref
     response_spec = get_response_spec(status_code=response.status_code, op=op)
 
-    if 'schema' not in response_spec:
-        return None
-
+    open_api_version = int(op.swagger_spec.spec_dict['openapi'].split('.')[0])
     content_type = response.headers.get('content-type', '').lower()
 
+    response_schema_key = content_type
+
+    # changes bellow allow get content spec depends on openapi version 2 or 3
+    if open_api_version == 2:
+        if 'schema' not in response_spec:
+            return None
+    elif open_api_version == 3:
+        if response_schema_key not in response_spec['content']:
+            # custom header also make sense
+            response_schema_key = 'application/problem+json'
+        try:
+            'schema' in response_spec['content'][response_schema_key]
+        except KeyError:
+            return None
+
     if content_type.startswith(APP_JSON) or content_type.startswith(APP_MSGPACK):
-        content_spec = deref(response_spec['schema'])
+        content_spec = deref(response_spec['content'][response_schema_key]['schema'])
+
         if content_type.startswith(APP_JSON):
             content_value = response.json()
         else:
@@ -395,6 +409,7 @@ def unmarshal_response_inner(
 
     # TODO: Non-json response contents
     return response.text
+
 
 
 def raise_on_unexpected(http_response):

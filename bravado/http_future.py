@@ -307,6 +307,24 @@ class HttpFuture(typing.Generic[T]):
         return swagger_result
 
 
+def get_open_api_version(
+    op,  # type: Operation
+):
+    # type: (...) -> typing.Optional[int]
+    """
+    Returns version of OpenAPI from specification
+    """
+    open_api_version = None
+    version_spec = (
+        op.swagger_spec.spec_dict.get('openapi')
+        or op.swagger_spec.spec_dict.get('swagger')
+    )
+    if version_spec:
+        open_api_version = int(version_spec.split('.')[0])
+
+    return open_api_version
+
+
 def unmarshal_response(
     incoming_response,  # type: IncomingResponse
     operation,  # type: Operation
@@ -369,26 +387,28 @@ def unmarshal_response_inner(
     deref = op.swagger_spec.deref
     response_spec = get_response_spec(status_code=response.status_code, op=op)
 
-    open_api_version = int(op.swagger_spec.spec_dict['openapi'].split('.')[0])
+    open_api_version = get_open_api_version(op)
+
     content_type = response.headers.get('content-type', '').lower()
 
-    response_schema_key = content_type
+    content_spec = None
 
     # changes bellow allow get content spec depends on openapi version 2 or 3
     if open_api_version == 2:
-        if 'schema' not in response_spec:
-            return None
+        if 'schema' in response_spec:
+            content_spec = deref(response_spec['schema'])
     elif open_api_version == 3:
-        if response_schema_key not in response_spec['content']:
-            # custom header also make sense
-            response_schema_key = 'application/problem+json'
-        try:
-            'schema' in response_spec['content'][response_schema_key]
-        except KeyError:
-            return None
+        schema_opt = (
+            response_spec['content'].get(content_type)
+            or response_spec['content'].get('application/problem+json')  # custom header also make sense
+        )
+        if schema_opt:
+            content_spec = deref(schema_opt['schema'])
+
+    if not content_spec:
+        return None
 
     if content_type.startswith(APP_JSON) or content_type.startswith(APP_MSGPACK):
-        content_spec = deref(response_spec['content'][response_schema_key]['schema'])
 
         if content_type.startswith(APP_JSON):
             content_value = response.json()
@@ -409,7 +429,6 @@ def unmarshal_response_inner(
 
     # TODO: Non-json response contents
     return response.text
-
 
 
 def raise_on_unexpected(http_response):
